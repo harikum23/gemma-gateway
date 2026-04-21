@@ -1,0 +1,35 @@
+{
+    admin off
+    auto_https off
+}
+
+:8443 {
+    encode gzip
+
+    @health path /v1/health
+    handle @health {
+        reverse_proxy gateway:8080
+    }
+
+    handle /v1/* {
+        reverse_proxy gateway:8080 {
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                dial_timeout 5s
+                read_timeout 120s
+                write_timeout 120s
+            }
+        }
+    }
+
+    handle {
+        respond "gemma-gateway" 200
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}

@@ -1,0 +1,87 @@
+name: gemma-gateway
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gemma-gateway:0.1.0
+    container_name: gemma-gateway
+    restart: unless-stopped
+    environment:
+      GATEWAY_ENGINE_URL: "http://host.docker.internal:11434"
+      GATEWAY_ENGINE_TYPE: "ollama"
+      GATEWAY_DEFAULT_MODEL: "gemma4:e4b"
+      GATEWAY_DEFAULT_EMBED_MODEL: "nomic-embed-text"
+      GATEWAY_REDIS_URL: "redis://redis:6379/0"
+      GATEWAY_DATA_DIR: "/data"
+      GATEWAY_LOG_LEVEL: "INFO"
+      GATEWAY_LOG_PROMPTS: "false"
+      GATEWAY_ADMISSION_MAX_DEPTH: "32"
+      GATEWAY_ADMISSION_MAX_WAIT_MS: "60000"
+      GATEWAY_DEFAULT_RPS_LIMIT: "10"
+      GATEWAY_DEFAULT_TPM_LIMIT: "60000"
+      GATEWAY_BOOTSTRAP_API_KEY: "${GATEWAY_BOOTSTRAP_API_KEY:-}"
+    volumes:
+      - gateway-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - gemma-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "1g"
+        reservations:
+          memory: "256m"
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  redis:
+    image: redis:7-alpine
+    container_name: gemma-gateway-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    volumes:
+      - redis-data:/data
+    networks:
+      - gemma-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256m"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: gemma-gateway-caddy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - gemma-net
+    depends_on:
+      - gateway
+
+networks:
+  gemma-net:
+    driver: bridge
+
+volumes:
+  gateway-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
