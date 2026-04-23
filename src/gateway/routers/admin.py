@@ -32,7 +32,12 @@ class MetricsSummaryResponse(BaseModel):
     summary: dict[str, Any]
 
 
-@router.get("/v1/models", response_model=ModelListResponse)
+@router.get(
+    "/v1/models",
+    response_model=ModelListResponse,
+    summary="List models",
+    description="Returns all model IDs currently loaded in the inference engine.",
+)
 async def list_models(
     request: Request,
     _: ApiKeyRecord = Depends(require_api_key),
@@ -40,7 +45,12 @@ async def list_models(
     return ModelListResponse(models=await request.app.state.engine.list_models())
 
 
-@router.post("/v1/admin/keys", response_model=CreateKeyResponse)
+@router.post(
+    "/v1/admin/keys",
+    response_model=CreateKeyResponse,
+    summary="Create API key",
+    description="Generate a new API key. The raw key is returned once — store it immediately. Requires admin key.",
+)
 async def create_key(
     request: Request,
     body: CreateKeyRequest,
@@ -50,7 +60,12 @@ async def create_key(
     return CreateKeyResponse(key=raw)
 
 
-@router.get("/v1/admin/keys", response_model=KeyListResponse)
+@router.get(
+    "/v1/admin/keys",
+    response_model=KeyListResponse,
+    summary="List API keys",
+    description="List all API keys with metadata (key_id, label, is_admin, dates, revocation status). Hashes are never returned. Requires admin key.",
+)
 async def list_keys(
     request: Request,
     _: ApiKeyRecord = Depends(require_admin_key),

@@ -3,6 +3,14 @@
     auto_https off
 }
 
+# On-host consumers reach the gateway directly (no TLS, no Caddy overhead)
+:8080 {
+    reverse_proxy gateway:8080 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
 :8443 {
     encode gzip
 

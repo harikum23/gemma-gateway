@@ -41,6 +41,11 @@ class ApiKeyRecord:
 class ApiKeyStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
+        # In-memory cache of {key_id: raw_key} populated at key creation time.
+        # Raw keys cannot be recovered from the argon2 hash; this cache lets
+        # the /portal/apikey endpoint surface the key to the operator without
+        # requiring a separate secret store.
+        self.raw_keys: dict[str, str] = {}
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(SCHEMA)
@@ -69,6 +74,7 @@ class ApiKeyStore:
                 "INSERT INTO api_keys (key_id, key_hash, label, is_admin) VALUES (?, ?, ?, ?)",
                 (key_id, hashed, label, 1 if is_admin else 0),
             )
+        self.raw_keys[key_id] = raw
         return raw
 
     def bootstrap(self, raw_key: str, label: str = "bootstrap", *, is_admin: bool = True) -> None:
@@ -77,11 +83,14 @@ class ApiKeyStore:
         with self._conn() as conn:
             cur = conn.execute("SELECT 1 FROM api_keys WHERE key_id = ?", (key_id,))
             if cur.fetchone() is not None:
+                # Key already exists; still cache the raw value so the portal can surface it.
+                self.raw_keys[key_id] = raw_key
                 return
             conn.execute(
                 "INSERT INTO api_keys (key_id, key_hash, label, is_admin) VALUES (?, ?, ?, ?)",
                 (key_id, hashed, label, 1 if is_admin else 0),
             )
+        self.raw_keys[key_id] = raw_key
 
     def count(self) -> int:
         with self._conn() as conn:
@@ -134,6 +143,7 @@ def ensure_bootstrap_key(store: ApiKeyStore, bootstrap_key: str | None) -> str |
     if store.count() > 0:
         return None
     generated = store.generate(label="auto-bootstrap", is_admin=True)
+    # generate() already caches in store.raw_keys; log for operator visibility.
     logger.warning(
         "api-key bootstrap: generated initial admin key (copy now; not shown again)\n"
         f"    GATEWAY_BOOTSTRAP_API_KEY={generated}"

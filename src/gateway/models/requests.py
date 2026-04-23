@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field, field_validator
 Role = Literal["system", "user", "assistant", "tool"]
 
 
+class WebSearchOptions(BaseModel):
+    max_results: int = 5
+    days: int | None = None
+    domains_allow: list[str] = []
+
+
 class Message(BaseModel):
     role: Role
     content: str
@@ -39,8 +45,10 @@ class GenerateRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     workflow: str | None = None
     priority: Literal["normal", "high"] = "normal"
-    stream: bool = False
+    stream: bool = True
     timeout_ms: int | None = None
+    enable_web_search: bool = False
+    web_search: WebSearchOptions | None = None
 
     @field_validator("messages")
     @classmethod
@@ -54,6 +62,29 @@ class GenerateRequest(BaseModel):
     def _max_tokens_positive(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("max_tokens must be positive")
+        return v
+
+
+class AgentOptions(BaseModel):
+    system: str = ""
+    builtin_tools: list[str] = Field(default_factory=list)
+    custom_tools: list[dict[str, Any]] = Field(default_factory=list)
+    max_steps: int = 4
+    total_budget_ms: int = 30_000
+    return_trace: bool = False
+    no_store: bool = False
+
+
+class AgentRequest(BaseModel):
+    model: str | None = None
+    messages: list[Message]
+    agent: AgentOptions = Field(default_factory=AgentOptions)
+
+    @field_validator("messages")
+    @classmethod
+    def _at_least_one_message(cls, v: list[Message]) -> list[Message]:
+        if not v:
+            raise ValueError("messages must contain at least one entry")
         return v
 
 

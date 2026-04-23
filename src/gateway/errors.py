@@ -62,3 +62,14 @@ class ValidationError(GatewayError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(400, detail)
+
+
+class QuotaExceededError(GatewayError):
+    code = "quota_exceeded"
+
+    def __init__(self, api_key_id: str, limit: int) -> None:
+        super().__init__(
+            429,
+            f"daily search quota of {limit} exceeded for key {api_key_id}",
+        )
+        self.headers = {"Retry-After": "3600"}

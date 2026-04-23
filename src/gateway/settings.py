@@ -47,6 +47,20 @@ class Settings(BaseSettings):
     max_tokens_hard_limit: int = 4096
     max_timeout_ms: int = 60_000
 
+    # Web search
+    search_provider: str = "gemini"
+    gemini_api_key: str = ""
+    search_cache_ttl_news_seconds: int = 1800
+    search_cache_ttl_evergreen_seconds: int = 86400
+    search_daily_quota_per_key: int = 500
+    search_max_iterations: int = 2
+    search_total_budget_ms: int = 8000
+
+    # Agent runtime
+    agent_max_concurrency_per_key: int = 2
+    agent_max_steps_ceiling: int = 10
+    agent_max_context_tokens: int = 6000
+
     @property
     def api_key_db_path(self) -> Path:
         return self.data_dir / self.api_key_db_filename

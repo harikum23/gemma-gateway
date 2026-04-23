@@ -22,7 +22,16 @@ def _normalize(vec: list[float]) -> list[float]:
     return [x / norm for x in vec]
 
 
-@router.post("/v1/embed", response_model=EmbedResponse)
+@router.post(
+    "/v1/embed",
+    response_model=EmbedResponse,
+    summary="Batch embeddings",
+    description=(
+        "Compute embeddings for a batch of strings (max 128 per request, "
+        "each up to 32 000 characters). Returns float vectors and their "
+        "dimensionality. Vectors are L2-normalized by default."
+    ),
+)
 async def embed(
     request: Request,
     body: EmbedRequest,

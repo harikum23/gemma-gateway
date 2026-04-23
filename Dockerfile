@@ -5,6 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libxml2-dev libxslt1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src ./src
@@ -19,7 +23,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates \
+    curl ca-certificates libxml2 libxslt1.1 \
     && rm -rf /var/lib/apt/lists/* \
     && python -m venv /opt/venv
 
@@ -42,4 +46,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8080/v1/health || exit 1
 
-CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
+CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

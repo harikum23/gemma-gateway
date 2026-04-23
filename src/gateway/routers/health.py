@@ -7,7 +7,15 @@ from gateway.models.responses import HealthResponse
 router = APIRouter(tags=["health"])
 
 
-@router.get("/v1/health", response_model=HealthResponse)
+@router.get(
+    "/v1/health",
+    response_model=HealthResponse,
+    summary="Health check",
+    description=(
+        "Returns engine readiness, loaded model IDs, admission queue depth, "
+        "and circuit breaker state. No authentication required."
+    ),
+)
 async def health(request: Request) -> HealthResponse:
     state = request.app.state
     engine = state.engine

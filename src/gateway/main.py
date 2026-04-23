@@ -11,9 +11,16 @@ from gateway.circuit import CircuitBreaker
 from gateway.engines.factory import build_engine
 from gateway.queue import AdmissionQueue
 from gateway.rate_limit import TokenBucketRateLimiter
-from gateway.routers import admin, embed, generate, health
+from gateway.agent import trace as agent_trace
+from gateway.routers import admin, agent, chat, embed, generate, health, portal
 from gateway.settings import get_settings
 from gateway.telemetry import MetricsStore
+
+try:
+    import redis.asyncio as aioredis  # type: ignore[import]
+    _REDIS_AVAILABLE = True
+except ImportError:
+    _REDIS_AVAILABLE = False
 
 
 def _configure_logging(level: str) -> None:
@@ -53,6 +60,22 @@ async def lifespan(app: FastAPI):
     rate_limiter = TokenBucketRateLimiter(rps=settings.default_rps_limit)
     metrics = MetricsStore(settings.data_dir / "metrics.db")
 
+    # Redis client — optional; search caching/quota degrades gracefully if absent
+    redis_client = None
+    if _REDIS_AVAILABLE and settings.redis_url:
+        try:
+            redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await redis_client.ping()
+            logger.info("redis connected: {}", settings.redis_url)
+        except Exception as exc:
+            logger.warning("redis unavailable (search caching disabled): {}", exc)
+            redis_client = None
+
+    # DuckDB trace store for agent runtime
+    import duckdb  # type: ignore[import]
+    trace_db = duckdb.connect(str(settings.data_dir / "traces.db"))
+    agent_trace.ensure_table(trace_db)
+
     app.state.settings = settings
     app.state.api_keys = api_keys
     app.state.engine = engine
@@ -60,6 +83,23 @@ async def lifespan(app: FastAPI):
     app.state.circuit = circuit
     app.state.rate_limiter = rate_limiter
     app.state.metrics = metrics
+    app.state.redis = redis_client
+    app.state.trace_db = trace_db
+
+    try:
+        await engine.generate(
+            model=settings.default_model,
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.0,
+            max_tokens=1,
+            stop=None,
+            tools=None,
+            response_format="text",
+            json_schema=None,
+        )
+        logger.info("model warmup complete")
+    except Exception as exc:
+        logger.warning("model warmup failed (gateway still starting): {}", exc)
 
     try:
         yield
@@ -67,6 +107,12 @@ async def lifespan(app: FastAPI):
         logger.info("gemma-gateway shutting down")
         await queue.stop()
         await engine.aclose()
+        if redis_client is not None:
+            await redis_client.aclose()
+        try:
+            trace_db.close()
+        except Exception:
+            pass
 
 
 def create_app() -> FastAPI:
@@ -80,6 +126,9 @@ def create_app() -> FastAPI:
     app.include_router(generate.router)
     app.include_router(embed.router)
     app.include_router(admin.router)
+    app.include_router(agent.router)
+    app.include_router(portal.router)
+    app.include_router(chat.router)
     return app
 
 

@@ -12,12 +12,23 @@ from loguru import logger
 from gateway.auth import ApiKeyRecord, require_api_key
 from gateway.errors import CircuitOpenError, EngineUnavailableError, ValidationError
 from gateway.models.requests import GenerateRequest
-from gateway.models.responses import GenerateResponse, ToolCall
+from gateway.models.responses import GenerateResponse, SearchSource, ToolCall
+from gateway.tools import loop as search_loop
 
 router = APIRouter(tags=["generate"])
 
 
-@router.post("/v1/generate")
+@router.post(
+    "/v1/generate",
+    summary="Chat generation",
+    description=(
+        "Send a list of messages and receive a completion. "
+        "Streams SSE tokens by default (stream=true). "
+        "Supports optional web search (enable_web_search), function tools, "
+        "structured JSON output (response_format / json_schema), "
+        "and priority queuing."
+    ),
+)
 async def generate(
     request: Request,
     body: GenerateRequest,
@@ -50,8 +61,8 @@ async def generate(
 
     if body.stream:
         async def _sse():
+            collected: list[str] = []
             try:
-                first = True
                 async for piece in engine.stream(
                     model=model,
                     messages=messages_dicts,
@@ -59,10 +70,16 @@ async def generate(
                     max_tokens=body.max_tokens,
                     stop=body.stop,
                 ):
-                    if first:
-                        first = False
-                    yield b"data: " + orjson.dumps({"delta": piece, "request_id": req_id}) + b"\n\n"
-                yield b"data: " + orjson.dumps({"done": True, "request_id": req_id}) + b"\n\n"
+                    collected.append(piece)
+                    yield b"data: " + orjson.dumps({"delta": piece, "done": False, "request_id": req_id}) + b"\n\n"
+                full_content = "".join(collected)
+                yield b"data: " + orjson.dumps({
+                    "delta": "",
+                    "done": True,
+                    "content": full_content,
+                    "model": model,
+                    "request_id": req_id,
+                }) + b"\n\n"
                 state.circuit.record_success()
             except Exception as exc:
                 state.circuit.record_failure()
@@ -73,6 +90,57 @@ async def generate(
             _sse(),
             media_type="text/event-stream",
             headers={"X-Request-Id": req_id, "Cache-Control": "no-cache"},
+        )
+
+    if body.enable_web_search:
+        async def _search_call():
+            return await search_loop.run_with_search(
+                body=body,
+                engine=engine,
+                state=state,
+                api_key_id=principal.key_id,
+            )
+
+        t0 = time.monotonic()
+        try:
+            loop_result = await state.queue.submit(
+                _search_call, priority=body.priority, max_wait_ms=body.timeout_ms
+            )
+        except EngineUnavailableError:
+            state.circuit.record_failure()
+            raise
+        except Exception:
+            state.circuit.record_failure()
+            raise
+        state.circuit.record_success()
+        total_ms = (time.monotonic() - t0) * 1000
+        queue_wait_ms = (time.monotonic() - enqueue_start - (total_ms / 1000)) * 1000
+        if queue_wait_ms < 0:
+            queue_wait_ms = 0.0
+
+        state.metrics.record(
+            endpoint="/v1/generate",
+            status=200,
+            latency_ms=total_ms,
+            tokens_in=loop_result.tokens_in,
+            tokens_out=loop_result.tokens_out,
+            model=model,
+            workflow=body.workflow,
+            api_key_id=principal.key_id,
+        )
+
+        return GenerateResponse(
+            model=model,
+            content=loop_result.content,
+            finish_reason=loop_result.finish_reason,  # type: ignore[arg-type]
+            tokens_in=loop_result.tokens_in,
+            tokens_out=loop_result.tokens_out,
+            latency_ms=total_ms,
+            request_id=req_id,
+            queue_wait_ms=queue_wait_ms,
+            sources=[SearchSource(url=s["url"], title=s["title"]) for s in loop_result.sources],
+            search_used=True,
+            search_cache_hit=loop_result.cache_hit,
         )
 
     async def _call():
