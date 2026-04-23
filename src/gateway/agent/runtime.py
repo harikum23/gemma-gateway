@@ -6,6 +6,7 @@ from typing import Any
 
 from loguru import logger
 
+from gateway.agent import coordinator as coord_mod
 from gateway.agent import memory as memory_mod
 from gateway.agent import trace as trace_mod
 from gateway.models.requests import AgentRequest
@@ -166,7 +167,9 @@ async def _execute_builtin(
                 redis_client=redis_client,
                 api_key_id="agent",
             )
-            return result.get("text") or "", result.get("sources") or []
+            raw = result.get("text") or ""
+            cleaned = coord_mod.clean_gemini_output(raw)
+            return cleaned, result.get("sources") or []
         except Exception as exc:
             return f"web_search error: {exc}", []
 
@@ -223,21 +226,21 @@ async def run_agent(
             all_tool_defs.append(_BUILTIN_TOOL_DEFS[name])
     all_tool_defs.extend(opts.custom_tools)
 
+    # Classify the user's intent from the last user message so the coordinator
+    # prompt can be tailored to the query type (stock / news / factual / general).
+    last_user_msg = next(
+        (m.content for m in reversed(request.messages) if m.role == "user"),
+        "",
+    )
+    query_type = coord_mod.classify_query(last_user_msg)
+    logger.debug("agent query_type={} last_user={!r}", query_type, last_user_msg[:80])
+
     # Build initial message list
     messages: list[dict] = []
     system_prompt = opts.system
     if not system_prompt and all_tool_defs:
-        tool_names = ", ".join(t["name"] for t in all_tool_defs)
-        system_prompt = (
-            f"You are a helpful assistant with access to these tools: {tool_names}. "
-            "Rules: "
-            "(1) When the user asks about current prices, live market data, recent news, "
-            "scores, weather, or any time-sensitive information — call web_search immediately. "
-            "Do NOT answer from memory for real-time questions. "
-            "(2) Use fetch_url to read the content of a specific URL. "
-            "(3) After getting tool results, synthesize a clear, direct answer. "
-            "(4) Never warn the user that you lack real-time access — you have web_search, use it."
-        )
+        tool_names = [t["name"] for t in all_tool_defs]
+        system_prompt = coord_mod.coordinator_prompt(query_type, tool_names)
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.extend(m.model_dump(exclude_none=True) for m in request.messages)

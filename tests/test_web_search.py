@@ -124,14 +124,17 @@ async def test_cache_miss_calls_provider_and_stores(settings) -> None:
 # ---------------------------------------------------------------------------
 
 
+_GEMINI_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models"
+    "/gemini-2.5-flash:generateContent"
+)
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_gemini_provider_parses_response() -> None:
     """Gemini provider should extract text and grounding sources correctly."""
-    respx.post(
-        "https://generativelanguage.googleapis.com/v1beta/models"
-        "/gemini-2.5-flash-preview-04-17:generateContent"
-    ).mock(return_value=Response(200, json=_GEMINI_RESPONSE))
+    respx.post(_GEMINI_ENDPOINT).mock(return_value=Response(200, json=_GEMINI_RESPONSE))
 
     result = await gemini_provider.search("capital of France", api_key="fake-key")
 
@@ -145,13 +148,21 @@ async def test_gemini_provider_parses_response() -> None:
 @respx.mock
 async def test_gemini_provider_raises_on_non_200() -> None:
     """Non-200 from Gemini should raise RuntimeError."""
-    respx.post(
-        "https://generativelanguage.googleapis.com/v1beta/models"
-        "/gemini-2.5-flash-preview-04-17:generateContent"
-    ).mock(return_value=Response(403, text="forbidden"))
+    respx.post(_GEMINI_ENDPOINT).mock(return_value=Response(403, text="forbidden"))
 
     with pytest.raises(RuntimeError, match="403"):
         await gemini_provider.search("query", api_key="bad-key")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_gemini_provider_raises_on_404() -> None:
+    """404 (expired model) should raise RuntimeError, not swallow silently."""
+    error_body = {"error": {"code": 404, "message": "models/gemini-2.5-flash is not found", "status": "NOT_FOUND"}}
+    respx.post(_GEMINI_ENDPOINT).mock(return_value=Response(404, json=error_body))
+
+    with pytest.raises(RuntimeError, match="404"):
+        await gemini_provider.search("NVDA stock", api_key="key")
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +174,7 @@ async def test_gemini_provider_raises_on_non_200() -> None:
 @respx.mock
 async def test_searxng_provider_parses_response() -> None:
     """SearXNG provider should join snippets and return structured sources."""
-    respx.get("http://searxng:8888/search").mock(
+    respx.get("http://searxng:8080/search").mock(
         return_value=Response(200, json=_SEARXNG_RESPONSE)
     )
 
@@ -173,6 +184,93 @@ async def test_searxng_provider_parses_response() -> None:
     assert "snippet B" in result["text"]
     assert len(result["sources"]) == 2
     assert result["sources"][0]["url"] == "https://example.com/a"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_searxng_uses_internal_docker_port() -> None:
+    """SearXNG URL must use container port 8080, not host-mapped port 8888."""
+    route = respx.get("http://searxng:8080/search").mock(
+        return_value=Response(200, json=_SEARXNG_RESPONSE)
+    )
+    await searxng_provider.search("test")
+    assert route.called
+
+
+# ---------------------------------------------------------------------------
+# Fallback behaviour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gemini_failure_falls_back_to_searxng(settings) -> None:
+    """When Gemini raises, SearXNG should be tried and its result returned."""
+    redis_mock = AsyncMock()
+    redis_mock.get = AsyncMock(return_value=None)
+    redis_mock.set = AsyncMock()
+
+    with patch("gateway.tools.web_search.quota_mod.check_and_increment", new_callable=AsyncMock), \
+         patch("gateway.tools.web_search.gemini_provider.search", side_effect=RuntimeError("Gemini 404")), \
+         patch("gateway.tools.web_search.searxng_provider.search", new_callable=AsyncMock) as mock_sx:
+
+        mock_sx.return_value = {"text": "fallback result", "sources": []}
+
+        result = await web_search(
+            query="NVDA stock",
+            days=None,
+            settings=settings,
+            redis_client=redis_mock,
+            api_key_id="k1",
+        )
+
+    assert result["text"] == "fallback result"
+    assert result["cache_hit"] is False
+    mock_sx.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_both_providers_fail_returns_empty_not_exception(settings) -> None:
+    """When both Gemini and SearXNG fail, return empty dict — never raise or pass error to model."""
+    redis_mock = AsyncMock()
+    redis_mock.get = AsyncMock(return_value=None)
+
+    with patch("gateway.tools.web_search.quota_mod.check_and_increment", new_callable=AsyncMock), \
+         patch("gateway.tools.web_search.gemini_provider.search", side_effect=RuntimeError("Gemini down")), \
+         patch("gateway.tools.web_search.searxng_provider.search", side_effect=RuntimeError("SearXNG down")):
+
+        result = await web_search(
+            query="NVDA stock",
+            days=None,
+            settings=settings,
+            redis_client=redis_mock,
+            api_key_id="k1",
+        )
+
+    # Empty result — NOT an exception, NOT an error string Gemma would apologise for
+    assert result["text"] == ""
+    assert result["sources"] == []
+    assert result["cache_hit"] is False
+
+
+@pytest.mark.asyncio
+async def test_searxng_only_provider_failure_returns_empty(settings) -> None:
+    """SearXNG-only config: if it fails, return empty result not exception."""
+    settings.search_provider = "searxng"
+    redis_mock = AsyncMock()
+    redis_mock.get = AsyncMock(return_value=None)
+
+    with patch("gateway.tools.web_search.quota_mod.check_and_increment", new_callable=AsyncMock), \
+         patch("gateway.tools.web_search.searxng_provider.search", side_effect=RuntimeError("SearXNG 503")):
+
+        result = await web_search(
+            query="test",
+            days=None,
+            settings=settings,
+            redis_client=redis_mock,
+            api_key_id="k1",
+        )
+
+    assert result["text"] == ""
 
 
 # ---------------------------------------------------------------------------

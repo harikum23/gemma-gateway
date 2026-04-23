@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -250,3 +250,292 @@ async def test_agent_concurrency_cap_returns_429():
                 assert r.status_code == 429
 
     await _run()
+
+
+# ---------------------------------------------------------------------------
+# Sources flow through from web_search to AgentResponse
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_agent_sources_collected_from_web_search():
+    """Sources returned by web_search must appear in AgentResponse.sources."""
+    from gateway.agent.runtime import run_agent
+
+    tool_call_result = _make_engine_result(
+        content="",
+        finish_reason="tool_calls",
+        tool_calls=[{"name": "web_search", "arguments": {"query": "NVDA stock today"}}],
+    )
+    final_result = _make_engine_result("NVDA is up 3%.", "stop")
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(side_effect=[tool_call_result, final_result])
+    state = _make_state()
+
+    mock_search_result = {
+        "text": "NVIDIA is trading at $875, up 3.2% today.",
+        "sources": [
+            {"url": "https://finance.yahoo.com/nvda", "title": "NVDA - Yahoo Finance"},
+            {"url": "https://reuters.com/nvda", "title": "Reuters NVDA"},
+        ],
+        "cache_hit": False,
+    }
+
+    with patch("gateway.agent.runtime.coord_mod.clean_gemini_output", side_effect=lambda x: x), \
+         patch("gateway.tools.web_search.web_search", new_callable=AsyncMock) as mock_ws:
+        mock_ws.return_value = mock_search_result
+
+        req = _agent_request(
+            messages=[Message(role="user", content="How is NVDA stock today?")],
+            builtin_tools=["web_search"],
+            return_trace=True,
+        )
+        response = await run_agent(req, engine, state)
+
+    assert response.finish_reason == "stop"
+    assert len(response.sources) == 2
+    urls = [s.url for s in response.sources]
+    assert "https://finance.yahoo.com/nvda" in urls
+    assert "https://reuters.com/nvda" in urls
+
+
+@pytest.mark.asyncio
+async def test_agent_sources_deduplicated():
+    """If web_search is called twice with overlapping sources, deduplicate."""
+    from gateway.agent.runtime import run_agent
+
+    tc1 = _make_engine_result(
+        content="", finish_reason="tool_calls",
+        tool_calls=[{"name": "web_search", "arguments": {"query": "NVDA q1"}}],
+    )
+    tc2 = _make_engine_result(
+        content="", finish_reason="tool_calls",
+        tool_calls=[{"name": "web_search", "arguments": {"query": "NVDA earnings"}}],
+    )
+    final = _make_engine_result("Combined answer.", "stop")
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(side_effect=[tc1, tc2, final])
+    state = _make_state()
+
+    shared_source = {"url": "https://reuters.com/nvda", "title": "Reuters"}
+    results = [
+        {"text": "Q1 data...", "sources": [shared_source], "cache_hit": False},
+        {"text": "Earnings...", "sources": [shared_source, {"url": "https://bloomberg.com", "title": "Bloomberg"}], "cache_hit": False},
+    ]
+
+    with patch("gateway.agent.runtime.coord_mod.clean_gemini_output", side_effect=lambda x: x), \
+         patch("gateway.tools.web_search.web_search", new_callable=AsyncMock) as mock_ws:
+        mock_ws.side_effect = results
+
+        req = _agent_request(
+            messages=[Message(role="user", content="NVDA earnings")],
+            builtin_tools=["web_search"],
+            max_steps=6,
+        )
+        response = await run_agent(req, engine, state)
+
+    # reuters.com appears in both calls but must only be in sources once
+    source_urls = [s.url for s in response.sources]
+    assert source_urls.count("https://reuters.com/nvda") == 1
+
+
+# ---------------------------------------------------------------------------
+# Stop condition — requires BOTH finish_reason=stop AND no tool_calls
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_agent_stop_requires_no_tool_calls():
+    """
+    If finish_reason=stop but tool_calls is populated (Ollama edge case),
+    the agent must NOT stop — it must process the tool calls.
+    """
+    from gateway.agent.runtime import run_agent
+
+    ambiguous_result = _make_engine_result(
+        content="",
+        finish_reason="stop",   # says stop but also has tool_calls
+        tool_calls=[{"name": "web_search", "arguments": {"query": "NVDA"}}],
+    )
+    final_result = _make_engine_result("Final.", "stop")
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(side_effect=[ambiguous_result, final_result])
+    state = _make_state()
+
+    with patch("gateway.agent.runtime.coord_mod.clean_gemini_output", side_effect=lambda x: x), \
+         patch("gateway.tools.web_search.web_search", new_callable=AsyncMock) as mock_ws:
+        mock_ws.return_value = {"text": "search result", "sources": [], "cache_hit": False}
+
+        req = _agent_request(
+            messages=[Message(role="user", content="NVDA today?")],
+            builtin_tools=["web_search"],
+        )
+        response = await run_agent(req, engine, state)
+
+    # Should have called generate twice (tool executed, then final answer)
+    assert engine.generate.call_count == 2
+    assert response.content == "Final."
+
+
+# ---------------------------------------------------------------------------
+# Coordinator prompt tailoring
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_agent_stock_query_gets_stock_system_prompt():
+    """A stock question must inject a system prompt focused on price/volume."""
+    from gateway.agent.runtime import run_agent
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(return_value=_make_engine_result("NVDA is $875.", "stop"))
+    state = _make_state()
+
+    req = _agent_request(
+        messages=[Message(role="user", content="How is NVDA stock performing today?")],
+        builtin_tools=["web_search"],
+    )
+    await run_agent(req, engine, state)
+
+    # The first generate call's messages must include a system message
+    first_call_messages = engine.generate.call_args_list[0].kwargs["messages"]
+    system_msgs = [m for m in first_call_messages if m.get("role") == "system"]
+    assert len(system_msgs) == 1
+    sp = system_msgs[0]["content"].lower()
+    # Stock prompt must mention price and volume
+    assert "price" in sp
+    assert "volume" in sp
+
+
+@pytest.mark.asyncio
+async def test_agent_general_query_gets_general_system_prompt():
+    """A general (non-stock, non-news) question gets the general coordinator prompt."""
+    from gateway.agent.runtime import run_agent
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(return_value=_make_engine_result("Transformers use attention.", "stop"))
+    state = _make_state()
+
+    req = _agent_request(
+        messages=[Message(role="user", content="Explain transformer architecture")],
+        builtin_tools=["web_search"],
+    )
+    await run_agent(req, engine, state)
+
+    first_call_messages = engine.generate.call_args_list[0].kwargs["messages"]
+    system_msgs = [m for m in first_call_messages if m.get("role") == "system"]
+    assert len(system_msgs) == 1
+    sp = system_msgs[0]["content"].lower()
+    # General prompt should mention decision about whether to search
+    assert "web_search" in sp
+
+
+@pytest.mark.asyncio
+async def test_agent_custom_system_prompt_not_overridden():
+    """If the caller supplies opts.system, it must NOT be replaced by coordinator."""
+    from gateway.agent.runtime import run_agent
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(return_value=_make_engine_result("ok", "stop"))
+    state = _make_state()
+
+    custom_prompt = "You are a pirate. Answer only in pirate speak."
+    req = AgentRequest(
+        model="gemma4:e4b",
+        messages=[Message(role="user", content="Hello")],
+        agent=AgentOptions(
+            system=custom_prompt,
+            builtin_tools=["web_search"],
+            max_steps=2,
+        ),
+    )
+    await run_agent(req, engine, state)
+
+    first_call_messages = engine.generate.call_args_list[0].kwargs["messages"]
+    system_msgs = [m for m in first_call_messages if m.get("role") == "system"]
+    assert len(system_msgs) == 1
+    assert system_msgs[0]["content"] == custom_prompt
+
+
+# ---------------------------------------------------------------------------
+# Gemini output cleaning
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_agent_cleans_gemini_output_before_observation():
+    """clean_gemini_output must be applied to web_search results before Gemma sees them."""
+    from gateway.agent.runtime import run_agent
+
+    tool_call_result = _make_engine_result(
+        content="", finish_reason="tool_calls",
+        tool_calls=[{"name": "web_search", "arguments": {"query": "NVDA"}}],
+    )
+    final_result = _make_engine_result("NVDA is $875.", "stop")
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(side_effect=[tool_call_result, final_result])
+    state = _make_state()
+
+    dirty_text = "Here is a summary of NVIDIA's performance: NVDA is up 3%."
+
+    with patch("gateway.agent.runtime.coord_mod.clean_gemini_output") as mock_clean, \
+         patch("gateway.tools.web_search.web_search", new_callable=AsyncMock) as mock_ws:
+        mock_clean.side_effect = lambda x: x.replace("Here is a summary of NVIDIA's performance: ", "")
+        mock_ws.return_value = {"text": dirty_text, "sources": [], "cache_hit": False}
+
+        req = _agent_request(
+            messages=[Message(role="user", content="NVDA today?")],
+            builtin_tools=["web_search"],
+        )
+        await run_agent(req, engine, state)
+
+    mock_clean.assert_called_once_with(dirty_text)
+
+    # Second generate call's tool message must contain cleaned text
+    second_call_messages = engine.generate.call_args_list[1].kwargs["messages"]
+    tool_msgs = [m for m in second_call_messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert "Here is a summary" not in tool_msgs[0]["content"]
+    assert "NVDA is up 3%" in tool_msgs[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# tool_call_id round-trip
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_agent_tool_result_has_matching_tool_call_id():
+    """tool result message must carry a tool_call_id matching the assistant's tool_call."""
+    from gateway.agent.runtime import run_agent
+
+    tool_call_result = _make_engine_result(
+        content="", finish_reason="tool_calls",
+        tool_calls=[{"name": "web_search", "arguments": {"query": "NVDA"}}],
+    )
+    final_result = _make_engine_result("Done.", "stop")
+
+    engine = AsyncMock()
+    engine.generate = AsyncMock(side_effect=[tool_call_result, final_result])
+    state = _make_state()
+
+    with patch("gateway.agent.runtime.coord_mod.clean_gemini_output", side_effect=lambda x: x), \
+         patch("gateway.tools.web_search.web_search", new_callable=AsyncMock) as mock_ws:
+        mock_ws.return_value = {"text": "result", "sources": [], "cache_hit": False}
+
+        req = _agent_request(
+            messages=[Message(role="user", content="NVDA?")],
+            builtin_tools=["web_search"],
+        )
+        await run_agent(req, engine, state)
+
+    second_call_messages = engine.generate.call_args_list[1].kwargs["messages"]
+
+    # Find assistant message with tool_calls
+    assistant_msg = next(m for m in second_call_messages if m.get("role") == "assistant" and m.get("tool_calls"))
+    tool_msg = next(m for m in second_call_messages if m.get("role") == "tool")
+
+    assistant_tc_id = assistant_msg["tool_calls"][0]["id"]
+    tool_result_id = tool_msg.get("tool_call_id")
+
+    assert assistant_tc_id == tool_result_id
+    assert len(assistant_tc_id) > 0

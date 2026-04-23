@@ -16,7 +16,7 @@ class SearchResult(TypedDict):
     sources: list[SearchSource]
 
 
-_SEARXNG_BASE = "http://searxng:8888/search"
+_SEARXNG_BASE = "http://searxng:8080/search"
 
 
 async def search(query: str, base_url: str = _SEARXNG_BASE) -> SearchResult:

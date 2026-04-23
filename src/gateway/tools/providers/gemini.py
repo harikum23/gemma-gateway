@@ -18,7 +18,7 @@ class SearchResult(TypedDict):
 
 _ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models"
-    "/gemini-2.5-flash-preview-04-17:generateContent"
+    "/gemini-2.5-flash:generateContent"
 )
 
 

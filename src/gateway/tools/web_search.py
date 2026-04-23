@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from gateway.settings import Settings
 from gateway.tools import cache as cache_mod
 from gateway.tools import quota as quota_mod
@@ -36,11 +38,23 @@ async def web_search(
     # 2. Enforce per-key daily quota
     await quota_mod.check_and_increment(redis_client, api_key_id, settings.search_daily_quota_per_key)
 
-    # 3. Call provider
+    # 3. Call provider — fall back to SearXNG if Gemini fails
     if provider == "gemini":
-        result = await gemini_provider.search(query, settings.gemini_api_key)
+        try:
+            result = await gemini_provider.search(query, settings.gemini_api_key)
+        except Exception as exc:
+            logger.warning("gemini search failed, falling back to searxng: {}", exc)
+            try:
+                result = await searxng_provider.search(query)
+            except Exception as exc2:
+                logger.warning("searxng fallback also failed: {}", exc2)
+                return {"text": "", "sources": [], "cache_hit": False}
     else:
-        result = await searxng_provider.search(query)
+        try:
+            result = await searxng_provider.search(query)
+        except Exception as exc:
+            logger.warning("searxng search failed: {}", exc)
+            return {"text": "", "sources": [], "cache_hit": False}
 
     # 4. Store in cache (fire-and-forget; errors suppressed inside set_cached)
     await cache_mod.set_cached(
