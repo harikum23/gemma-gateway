@@ -23,20 +23,22 @@ class Settings(BaseSettings):
     engine_url: str = "http://host.docker.internal:11434"
     engine_timeout_s: float = 120.0
 
-    default_model: str = "gemma4:e4b"
+    default_model: str = "qwen2.5:7b-instruct-q4_K_M"
     default_embed_model: str = "nomic-embed-text"
 
     redis_url: str | None = None
 
+    admission_concurrency: int = 4
     admission_max_depth: int = 32
     admission_max_wait_ms: int = 60_000
+    metrics_retention_days: int = 30
 
     default_rps_limit: int = 10
     default_tpm_limit: int = 60_000
 
     circuit_error_threshold: float = 0.2
     circuit_window_s: int = 30
-    circuit_reset_s: int = 30
+    circuit_reset_s: float = 30.0
 
     log_level: str = "INFO"
     log_prompts: bool = False

@@ -34,6 +34,8 @@ class AdmissionQueue:
         self.max_depth = max_depth
         self.default_max_wait_ms = default_max_wait_ms
         self._concurrency = concurrency
+        # Semaphore tracks in-flight count: in_flight = concurrency - sem._value.
+        # depth() includes both queued AND in-flight so callers see true queue pressure.
         self._sem = asyncio.Semaphore(concurrency)
         self._items: asyncio.PriorityQueue[_QueueItem] = asyncio.PriorityQueue()
         self._seq = 0
@@ -41,13 +43,14 @@ class AdmissionQueue:
         self._workers: list[asyncio.Task[None]] = []
 
     def depth(self) -> int:
-        return self._items.qsize()
+        in_flight = self._concurrency - self._sem._value  # type: ignore[attr-defined]
+        return self._items.qsize() + in_flight
 
     def start(self) -> None:
         if self._workers_started:
             return
         self._workers_started = True
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for _ in range(self._concurrency):
             self._workers.append(loop.create_task(self._worker()))
 
@@ -71,7 +74,7 @@ class AdmissionQueue:
     ) -> Any:
         if self.depth() >= self.max_depth:
             raise QueueFullError(self.depth(), self.max_depth)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future[Any] = loop.create_future()
         self._seq += 1
         item = _QueueItem(

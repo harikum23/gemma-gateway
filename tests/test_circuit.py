@@ -24,7 +24,7 @@ def test_circuit_trips_on_failure_rate() -> None:
 
 
 def test_circuit_half_open_after_reset() -> None:
-    cb = CircuitBreaker(error_threshold=0.1, min_samples=2, window_s=60, reset_s=0)
+    cb = CircuitBreaker(error_threshold=0.1, min_samples=2, window_s=60, reset_s=0.001)
     cb.record_failure()
     cb.record_failure()
     assert cb.state() == "open"

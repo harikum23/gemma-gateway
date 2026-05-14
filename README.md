@@ -7,8 +7,8 @@ See [`PLAN.md`](./PLAN.md) for full design.
 ## Quick start (Mac mini M4 hybrid — LOCKED v1)
 
 ```bash
-# Prereqs: Docker Desktop running, Ollama native on :11434, gemma4:e4b pulled.
-ollama list                       # verify gemma4:e4b is present
+# Prereqs: Docker Desktop running, Ollama native on :11434, qwen2.5:7b-instruct-q4_K_M pulled.
+ollama list                       # verify qwen2.5:7b-instruct-q4_K_M is present
 cp .env.example .env              # edit to set a bootstrap API key (optional)
 
 docker compose up -d --build
@@ -18,7 +18,7 @@ curl -fsS http://localhost:8080/v1/health
 curl -X POST http://localhost:8080/v1/generate \
   -H "Authorization: Bearer <API-KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"gemma4:e4b","messages":[{"role":"user","content":"Hello"}],"max_tokens":64}'
+  -d '{"model":"qwen2.5:7b-instruct-q4_K_M","messages":[{"role":"user","content":"Hello"}],"max_tokens":64}'
 ```
 
 ## Endpoints

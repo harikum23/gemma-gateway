@@ -11,7 +11,7 @@ from gateway.main import create_app
 @respx.mock
 async def test_health_reports_engine_ready() -> None:
     respx.get("http://ollama.invalid/api/tags").mock(
-        return_value=Response(200, json={"models": [{"name": "gemma4:e4b", "size": 1}]})
+        return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M", "size": 1}]})
     )
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -21,7 +21,7 @@ async def test_health_reports_engine_ready() -> None:
             data = r.json()
             assert data["engine"] == "ollama"
             assert data["engine_ready"] is True
-            assert "gemma4:e4b" in data["models"]
+            assert "qwen2.5:7b-instruct-q4_K_M" in data["models"]
 
 
 @pytest.mark.asyncio

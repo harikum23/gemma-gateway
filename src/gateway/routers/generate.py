@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from gateway.auth import ApiKeyRecord, require_api_key
-from gateway.errors import CircuitOpenError, EngineUnavailableError, ValidationError
+from gateway.errors import CircuitOpenError, EngineUnavailableError, QueueFullError, QueueTimeoutError, ValidationError
 from gateway.models.requests import GenerateRequest
 from gateway.models.responses import GenerateResponse, SearchSource, ToolCall
 from gateway.tools import loop as search_loop
@@ -106,6 +106,9 @@ async def generate(
             loop_result = await state.queue.submit(
                 _search_call, priority=body.priority, max_wait_ms=body.timeout_ms
             )
+        except (QueueFullError, QueueTimeoutError):
+            # Queue pressure is not an engine fault — don't penalise the circuit.
+            raise
         except EngineUnavailableError:
             state.circuit.record_failure()
             raise
@@ -160,6 +163,9 @@ async def generate(
         result = await state.queue.submit(
             _call, priority=body.priority, max_wait_ms=body.timeout_ms
         )
+    except (QueueFullError, QueueTimeoutError):
+        # Queue pressure is not an engine fault — don't penalise the circuit.
+        raise
     except EngineUnavailableError:
         state.circuit.record_failure()
         raise

@@ -443,7 +443,7 @@ async def test_enable_web_search_false_skips_loop() -> None:
 
     with respx_mod.mock:
         respx_mod.get("http://ollama.invalid/api/tags").mock(
-            return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+            return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
         )
         respx_mod.post("http://ollama.invalid/api/chat").mock(
             return_value=Response(200, json=_OLLAMA_JSON)

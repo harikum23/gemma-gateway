@@ -11,7 +11,7 @@ services:
     environment:
       GATEWAY_ENGINE_URL: "http://host.docker.internal:11434"
       GATEWAY_ENGINE_TYPE: "ollama"
-      GATEWAY_DEFAULT_MODEL: "gemma4:e4b"
+      GATEWAY_DEFAULT_MODEL: "qwen2.5:7b-instruct-q4_K_M"
       GATEWAY_DEFAULT_EMBED_MODEL: "nomic-embed-text"
       GATEWAY_REDIS_URL: "redis://redis:6379/0"
       GATEWAY_DATA_DIR: "/data"

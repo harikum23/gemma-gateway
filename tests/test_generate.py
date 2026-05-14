@@ -30,7 +30,7 @@ _OLLAMA_STREAM_BODY = (
 @respx.mock
 async def test_generate_happy_path() -> None:
     respx.get("http://ollama.invalid/api/tags").mock(
-        return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+        return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
     )
     respx.post("http://ollama.invalid/api/chat").mock(
         return_value=Response(200, json=_OLLAMA_CHAT_JSON)
@@ -42,7 +42,7 @@ async def test_generate_happy_path() -> None:
             r = await client.post(
                 "/v1/generate",
                 json={
-                    "model": "gemma4:e4b",
+                    "model": "qwen2.5:7b-instruct-q4_K_M",
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 16,
                     "stream": False,
@@ -61,7 +61,7 @@ async def test_generate_happy_path() -> None:
 async def test_generate_stream_false_returns_json() -> None:
     """stream=false must return a normal JSON response, not SSE."""
     respx.get("http://ollama.invalid/api/tags").mock(
-        return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+        return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
     )
     respx.post("http://ollama.invalid/api/chat").mock(
         return_value=Response(200, json=_OLLAMA_CHAT_JSON)
@@ -89,7 +89,7 @@ async def test_generate_stream_false_returns_json() -> None:
 async def test_generate_stream_true_returns_event_stream() -> None:
     """stream=true (the default) must return text/event-stream content-type."""
     respx.get("http://ollama.invalid/api/tags").mock(
-        return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+        return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
     )
     respx.post("http://ollama.invalid/api/chat").mock(
         return_value=Response(200, content=_OLLAMA_STREAM_BODY)
@@ -115,7 +115,7 @@ async def test_generate_stream_true_returns_event_stream() -> None:
 async def test_generate_stream_sse_events_well_formed() -> None:
     """SSE events must be valid JSON with expected shape; final event has done=true and content."""
     respx.get("http://ollama.invalid/api/tags").mock(
-        return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+        return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
     )
     respx.post("http://ollama.invalid/api/chat").mock(
         return_value=Response(200, content=_OLLAMA_STREAM_BODY)
@@ -162,7 +162,7 @@ async def test_generate_stream_sse_events_well_formed() -> None:
 async def test_generate_default_is_streaming() -> None:
     """Omitting stream field defaults to streaming (text/event-stream)."""
     respx.get("http://ollama.invalid/api/tags").mock(
-        return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+        return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
     )
     respx.post("http://ollama.invalid/api/chat").mock(
         return_value=Response(200, content=_OLLAMA_STREAM_BODY)

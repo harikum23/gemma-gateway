@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
     engine = build_engine(settings)
     queue = AdmissionQueue(
-        concurrency=4,
+        concurrency=settings.admission_concurrency,
         max_depth=settings.admission_max_depth,
         default_max_wait_ms=settings.admission_max_wait_ms,
     )
@@ -100,6 +100,11 @@ async def lifespan(app: FastAPI):
         logger.info("model warmup complete")
     except Exception as exc:
         logger.warning("model warmup failed (gateway still starting): {}", exc)
+
+    # Prune old metrics on startup so the DB doesn't grow unbounded.
+    pruned = metrics.prune(retention_days=settings.metrics_retention_days)
+    if pruned:
+        logger.info("metrics pruned {} rows older than {} days", pruned, settings.metrics_retention_days)
 
     try:
         yield

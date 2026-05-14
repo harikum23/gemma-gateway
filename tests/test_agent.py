@@ -50,7 +50,7 @@ def _agent_request(
     no_store=False,
 ):
     return AgentRequest(
-        model="gemma4:e4b",
+        model="qwen2.5:7b-instruct-q4_K_M",
         messages=messages or [Message(role="user", content="Hello")],
         agent=AgentOptions(
             builtin_tools=builtin_tools or [],
@@ -222,7 +222,7 @@ async def test_agent_concurrency_cap_returns_429():
     @respx.mock
     async def _run():
         respx.get("http://ollama.invalid/api/tags").mock(
-            return_value=Response(200, json={"models": [{"name": "gemma4:e4b"}]})
+            return_value=Response(200, json={"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
         )
         respx.post("http://ollama.invalid/api/chat").mock(
             return_value=Response(200, json={
@@ -441,7 +441,7 @@ async def test_agent_custom_system_prompt_not_overridden():
 
     custom_prompt = "You are a pirate. Answer only in pirate speak."
     req = AgentRequest(
-        model="gemma4:e4b",
+        model="qwen2.5:7b-instruct-q4_K_M",
         messages=[Message(role="user", content="Hello")],
         agent=AgentOptions(
             system=custom_prompt,

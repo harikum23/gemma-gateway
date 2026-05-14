@@ -12,7 +12,7 @@ State = Literal["closed", "open", "half_open"]
 class CircuitBreaker:
     error_threshold: float = 0.2
     window_s: int = 30
-    reset_s: int = 30
+    reset_s: float = 30.0
     min_samples: int = 20
 
     _events: deque[tuple[float, bool]] = field(default_factory=deque)

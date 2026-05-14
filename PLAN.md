@@ -1,5 +1,7 @@
 # gemma-gateway — High-Traffic Local LLM Service
 
+> **Note (2026-05-11):** Active default model is `qwen2.5:7b-instruct-q4_K_M` (configured in `docker-compose.yml`). The historical Gemma4 references below describe the original design and remain as scaling guidance for larger hardware — they are not the live config.
+
 ## Purpose
 A single, shareable HTTP service that exposes Gemma (and future models) as LLM primitives to every project on this machine — SMA, Indian-stock-analyzer, AgentFlow, and future apps. Owns model runtime, batching, queuing, auth, and observability. Stateless with respect to business data; does **not** store prompts, embeddings, or domain content.
 
@@ -332,7 +334,7 @@ Prometheus scrape endpoint (scoped to admin network).
 ```bash
 # Option A: Ollama
 brew install ollama
-ollama pull gemma4:e4b            # verify exact tag on ollama.com/library/gemma4
+ollama pull qwen2.5:7b-instruct-q4_K_M            # verify exact tag on ollama.com/library/gemma4
 brew services start ollama        # autostart on login
 # exposes http://localhost:11434
 

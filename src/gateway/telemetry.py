@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import time
 from pathlib import Path
@@ -39,6 +40,31 @@ class MetricsStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _record_sync(
+        self,
+        *,
+        endpoint: str,
+        status: int,
+        latency_ms: float,
+        tokens_in: int,
+        tokens_out: int,
+        model: str | None,
+        workflow: str | None,
+        api_key_id: str | None,
+        error_code: str | None,
+    ) -> None:
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """INSERT INTO request_metrics
+                   (ts, endpoint, status, latency_ms, tokens_in, tokens_out,
+                    model, workflow, api_key_id, error_code)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    time.time(), endpoint, status, latency_ms, tokens_in, tokens_out,
+                    model, workflow, api_key_id, error_code,
+                ),
+            )
+
     def record(
         self,
         *,
@@ -52,17 +78,28 @@ class MetricsStore:
         api_key_id: str | None = None,
         error_code: str | None = None,
     ) -> None:
+        """Fire-and-forget async write so the event loop is never blocked."""
+        asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._record_sync(
+                endpoint=endpoint,
+                status=status,
+                latency_ms=latency_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model=model,
+                workflow=workflow,
+                api_key_id=api_key_id,
+                error_code=error_code,
+            ),
+        )
+
+    def prune(self, retention_days: int = 30) -> int:
+        """Delete rows older than *retention_days*. Returns row count deleted."""
+        cutoff = time.time() - retention_days * 86400
         with self._lock, self._conn() as conn:
-            conn.execute(
-                """INSERT INTO request_metrics
-                   (ts, endpoint, status, latency_ms, tokens_in, tokens_out,
-                    model, workflow, api_key_id, error_code)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    time.time(), endpoint, status, latency_ms, tokens_in, tokens_out,
-                    model, workflow, api_key_id, error_code,
-                ),
-            )
+            cur = conn.execute("DELETE FROM request_metrics WHERE ts < ?", (cutoff,))
+            return cur.rowcount
 
     def summary(self, window_s: int = 300) -> dict[str, float | int]:
         since = time.time() - window_s

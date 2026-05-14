@@ -162,19 +162,21 @@ class OllamaEngine:
                 if evt.get("done"):
                     break
 
+    async def _embed_one(self, model: str, text: str) -> tuple[list[float], int]:
+        try:
+            r = await self._client.post("/api/embeddings", json={"model": model, "prompt": text})
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise EngineUnavailableError(f"ollama embed failed: {e}") from e
+        data = r.json()
+        vec = data.get("embedding") or []
+        if not vec:
+            raise EngineUnavailableError(f"ollama returned empty embedding for model '{model}'")
+        return [float(x) for x in vec], int(data.get("prompt_eval_count", 0) or 0)
+
     async def embed(self, *, model: str, inputs: list[str]) -> EngineEmbedResult:
-        vectors: list[list[float]] = []
-        total_in = 0
-        for text in inputs:
-            try:
-                r = await self._client.post("/api/embeddings", json={"model": model, "prompt": text})
-                r.raise_for_status()
-            except httpx.HTTPError as e:
-                raise EngineUnavailableError(f"ollama embed failed: {e}") from e
-            data = r.json()
-            vec = data.get("embedding") or []
-            if not vec:
-                raise EngineUnavailableError(f"ollama returned empty embedding for model '{model}'")
-            vectors.append([float(x) for x in vec])
-            total_in += int(data.get("prompt_eval_count", 0) or 0)
+        import asyncio
+        results = await asyncio.gather(*[self._embed_one(model, t) for t in inputs])
+        vectors = [r[0] for r in results]
+        total_in = sum(r[1] for r in results)
         return EngineEmbedResult(vectors=vectors, dims=len(vectors[0]) if vectors else 0, tokens_in=total_in)

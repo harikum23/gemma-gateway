@@ -21,9 +21,12 @@ async def health(request: Request) -> HealthResponse:
     engine = state.engine
     ready = await engine.health()
     models = [m["id"] for m in (await engine.list_models() if ready else [])]
+    # Degraded if the default model isn't loaded yet (e.g. still pulling).
+    default_model = state.settings.default_model
+    model_ready = ready and any(m == default_model or m.startswith(default_model.split(":")[0]) for m in models)
     circuit_state = state.circuit.state()
     queue_depth = state.queue.depth()
-    overall = "ok" if ready and circuit_state == "closed" else ("degraded" if ready else "down")
+    overall = "ok" if model_ready and circuit_state == "closed" else ("degraded" if ready else "down")
     return HealthResponse(
         status=overall,
         engine=engine.name,
