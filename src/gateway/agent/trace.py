@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,11 @@ def ensure_table(conn: Any) -> None:
     conn.commit()
 
 
+def _do_insert(conn: Any, params: tuple) -> None:
+    conn.execute(_INSERT_SQL, params)
+    conn.commit()
+
+
 async def log_step(
     *,
     conn: Any,
@@ -56,39 +62,45 @@ async def log_step(
     latency_ms: int,
     no_store: bool = False,
 ) -> None:
-    """Persist one agent step to DuckDB. Silently skips if no_store=True."""
-    if no_store:
+    """Persist one agent step to DuckDB. Silently skips if no_store=True.
+
+    DuckDB is synchronous, so the actual write runs in a worker thread to
+    keep the asyncio event loop unblocked even under heavy trace volume.
+    """
+    if no_store or conn is None:
         return
+    params = (
+        request_id,
+        consumer_key_id,
+        step,
+        tool_name,
+        json.dumps(tool_args),
+        observation,
+        tokens_in,
+        tokens_out,
+        latency_ms,
+    )
     try:
-        conn.execute(
-            _INSERT_SQL,
-            (
-                request_id,
-                consumer_key_id,
-                step,
-                tool_name,
-                json.dumps(tool_args),
-                observation,
-                tokens_in,
-                tokens_out,
-                latency_ms,
-            ),
-        )
-        conn.commit()
+        await asyncio.to_thread(_do_insert, conn, params)
     except Exception as exc:
         logger.warning("agent trace log_step failed: {}", exc)
 
 
+def _do_select(conn: Any, request_id: str) -> list[tuple]:
+    return conn.execute(_SELECT_SQL, [request_id]).fetchall()
+
+
 async def get_trace(conn: Any, request_id: str) -> list[dict]:
     """Return all steps for a given request_id, ordered by step."""
+    if conn is None:
+        return []
     try:
-        rows = conn.execute(_SELECT_SQL, [request_id]).fetchall()
+        rows = await asyncio.to_thread(_do_select, conn, request_id)
         cols = ["request_id", "consumer_key_id", "step", "tool_name", "tool_args",
                 "observation", "tokens_in", "tokens_out", "latency_ms", "ts"]
         result = []
         for row in rows:
             d = dict(zip(cols, row))
-            # Deserialise stored JSON args back to dict
             try:
                 d["tool_args"] = json.loads(d["tool_args"] or "{}")
             except Exception:

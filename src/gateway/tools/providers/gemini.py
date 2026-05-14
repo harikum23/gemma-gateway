@@ -5,6 +5,8 @@ from typing import Any, TypedDict
 import httpx
 from loguru import logger
 
+from gateway.tools.http_client import get_client
+
 
 class SearchSource(TypedDict):
     url: str
@@ -28,15 +30,15 @@ async def search(query: str, api_key: str) -> SearchResult:
         "contents": [{"parts": [{"text": query}]}],
         "tools": [{"google_search": {}}],
     }
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        try:
-            resp = await client.post(
-                _ENDPOINT,
-                params={"key": api_key},
-                json=payload,
-            )
-        except httpx.TimeoutException as exc:
-            raise RuntimeError(f"Gemini search timed out after 12s: {exc}") from exc
+    client = await get_client(timeout=12.0)
+    try:
+        resp = await client.post(
+            _ENDPOINT,
+            params={"key": api_key},
+            json=payload,
+        )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Gemini search timed out after 12s: {exc}") from exc
 
     if resp.status_code != 200:
         raise RuntimeError(

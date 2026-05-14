@@ -14,13 +14,18 @@ async def check_and_increment(
     redis_client: Any,
     api_key_id: str,
     daily_limit: int,
+    *,
+    redis_required: bool = False,
 ) -> None:
     """Increment the daily search counter for this API key.
 
-    Raises QuotaExceededError if the limit has been reached.
-    If Redis is unavailable, quota is not enforced (fail open).
+    Raises QuotaExceededError if the limit has been reached or if
+    redis_required=True and Redis is unreachable. Otherwise fails open when
+    Redis is absent (quota best-effort).
     """
     if redis_client is None:
+        if redis_required:
+            raise QuotaExceededError(api_key_id, daily_limit)
         return
 
     key = _quota_key(api_key_id)
@@ -34,5 +39,6 @@ async def check_and_increment(
     except QuotaExceededError:
         raise
     except Exception:
+        if redis_required:
+            raise QuotaExceededError(api_key_id, daily_limit) from None
         # Fail open on Redis errors — don't block search on infra issues
-        pass

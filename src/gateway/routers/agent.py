@@ -70,7 +70,9 @@ async def run_agent(
     if body.agent.max_steps > ceiling:
         raise ValidationError(f"agent.max_steps must be <= {ceiling}")
 
-    if not state.circuit.allow(is_high_priority=False):
+    agent_model = body.model or settings.default_model
+    breaker = state.circuit.for_key(engine=state.engine.name, model=agent_model)
+    if not breaker.allow(is_high_priority=False):
         raise CircuitOpenError()
 
     state.rate_limiter.check(principal.key_id)
@@ -93,12 +95,12 @@ async def run_agent(
             return await agent_runtime.run_agent(body, state.engine, state)
 
         response = await state.queue.submit(_run, priority="normal", max_wait_ms=body.agent.total_budget_ms)
-        state.circuit.record_success()
+        breaker.record_success()
     except EngineUnavailableError:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
     except Exception:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
     finally:
         await _decrement_concurrency(redis_client, principal.key_id)
@@ -177,7 +179,9 @@ async def submit_tool_result(
 
     state._agent_key_id = principal.key_id
 
-    if not state.circuit.allow(is_high_priority=False):
+    resume_model = agent_request.model or state.settings.default_model
+    breaker = state.circuit.for_key(engine=state.engine.name, model=resume_model)
+    if not breaker.allow(is_high_priority=False):
         raise CircuitOpenError()
 
     max_concurrency = getattr(state.settings, "agent_max_concurrency_per_key", 2)
@@ -192,12 +196,12 @@ async def submit_tool_result(
             return await agent_runtime.run_agent(agent_request, state.engine, state)
 
         response = await state.queue.submit(_run, priority="normal", max_wait_ms=agent_request.agent.total_budget_ms)
-        state.circuit.record_success()
+        breaker.record_success()
     except EngineUnavailableError:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
     except Exception:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
     finally:
         await _decrement_concurrency(redis_client, principal.key_id)

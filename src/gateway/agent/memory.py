@@ -63,7 +63,7 @@ async def maybe_summarize(
                 }
             ],
             temperature=0.0,
-            max_tokens=256,
+            max_tokens=getattr(settings, "agent_memory_summary_max_tokens", 256),
             stop=None,
             tools=None,
             response_format="text",

@@ -68,6 +68,9 @@ class HealthResponse(BaseModel):
     queue_max: int
     circuit: str
     models: list[str] = Field(default_factory=list)
+    redis_configured: bool = False
+    redis_connected: bool = False
+    circuits: dict[str, str] = Field(default_factory=dict)
 
 
 class ModelListResponse(BaseModel):

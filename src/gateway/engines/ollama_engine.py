@@ -14,8 +14,9 @@ from gateway.errors import EngineUnavailableError
 class OllamaEngine:
     name = "ollama"
 
-    def __init__(self, base_url: str, *, timeout_s: float = 120.0) -> None:
+    def __init__(self, base_url: str, *, timeout_s: float = 120.0, num_ctx: int | None = None) -> None:
         self.base_url = base_url.rstrip("/")
+        self.num_ctx = num_ctx
         self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
 
     async def aclose(self) -> None:
@@ -58,6 +59,8 @@ class OllamaEngine:
             "temperature": temperature,
             "num_predict": max_tokens,
         }
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
         if stop:
             options["stop"] = stop
         payload: dict[str, Any] = {

@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
 
     engine_type: Literal["ollama", "vllm", "mlx"] = "ollama"
+    # Default targets Docker-on-Mac. On Linux hosts running the gateway in
+    # Docker, override with GATEWAY_ENGINE_URL=http://172.17.0.1:11434 or
+    # add --add-host=host.docker.internal:host-gateway to the container.
     engine_url: str = "http://host.docker.internal:11434"
     engine_timeout_s: float = 120.0
 
@@ -27,11 +30,15 @@ class Settings(BaseSettings):
     default_embed_model: str = "nomic-embed-text"
 
     redis_url: str | None = None
+    # When Redis is configured but unreachable, fail closed on quota checks
+    # rather than silently disabling them. Default off for dev-friendliness.
+    redis_required: bool = False
 
     admission_concurrency: int = 4
     admission_max_depth: int = 32
     admission_max_wait_ms: int = 60_000
     metrics_retention_days: int = 30
+    metrics_prune_interval_s: int = 3600
 
     default_rps_limit: int = 10
     default_tpm_limit: int = 60_000
@@ -41,13 +48,36 @@ class Settings(BaseSettings):
     circuit_reset_s: float = 30.0
 
     log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
     log_prompts: bool = False
+    # Set false in production to keep the auto-generated admin key out of logs.
+    log_bootstrap_key: bool = True
 
     bootstrap_api_key: str | None = None
     api_key_db_filename: str = "api_keys.db"
 
-    max_tokens_hard_limit: int = 4096
+    max_tokens_hard_limit: int = 8192
     max_timeout_ms: int = 60_000
+    max_request_bytes: int = 1_048_576  # 1 MiB cap on request bodies
+
+    # Model context window passed to Ollama as num_ctx. Ollama defaults to
+    # 2048 which silently truncates long prompts; this raises it to qwen2.5's
+    # 8K native window. Increase for longer-context models, decrease for
+    # VRAM-constrained hosts.
+    model_num_ctx: int = 8192
+    # Conservative chars-per-token used by input-budget validation. 3 over-
+    # estimates and is safer than under-estimating for CJK or whitespace-poor
+    # prompts. Reserve some slice of num_ctx for the response.
+    chars_per_token: int = 3
+    input_token_headroom: int = 256  # reserve for output even at max_tokens
+
+    # Defaults for internal generate calls — pulled here so operators can
+    # tune without code changes.
+    agent_runtime_max_tokens: int = 2048
+    agent_memory_summary_max_tokens: int = 256
+    tool_summarize_max_tokens: int = 512
+    tool_translate_max_tokens: int = 1024
+    tool_extract_entities_max_tokens: int = 512
 
     # Web search
     search_provider: str = "gemini"

@@ -51,13 +51,14 @@ async def embed(
 
     state.rate_limiter.check(principal.key_id)
 
+    breaker = state.circuit.for_key(engine=state.engine.name, model=model)
     t0 = time.monotonic()
     try:
         result = await state.engine.embed(model=model, inputs=body.inputs)
     except EngineUnavailableError:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
-    state.circuit.record_success()
+    breaker.record_success()
     latency_ms = (time.monotonic() - t0) * 1000
 
     vectors = [_normalize(v) for v in result.vectors] if body.normalize else result.vectors

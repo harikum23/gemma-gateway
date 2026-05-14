@@ -267,7 +267,7 @@ async def run_agent(
                 model=model,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=2048,
+                max_tokens=getattr(settings, "agent_runtime_max_tokens", 2048),
                 stop=None,
                 tools=all_tool_defs if all_tool_defs else None,
                 response_format="text",

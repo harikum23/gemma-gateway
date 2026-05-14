@@ -135,7 +135,12 @@ class ApiKeyStore:
         )
 
 
-def ensure_bootstrap_key(store: ApiKeyStore, bootstrap_key: str | None) -> str | None:
+def ensure_bootstrap_key(
+    store: ApiKeyStore,
+    bootstrap_key: str | None,
+    *,
+    log_generated_key: bool = True,
+) -> str | None:
     if bootstrap_key:
         store.bootstrap(bootstrap_key)
         logger.info("api-key bootstrap: using provided GATEWAY_BOOTSTRAP_API_KEY")
@@ -143,11 +148,19 @@ def ensure_bootstrap_key(store: ApiKeyStore, bootstrap_key: str | None) -> str |
     if store.count() > 0:
         return None
     generated = store.generate(label="auto-bootstrap", is_admin=True)
-    # generate() already caches in store.raw_keys; log for operator visibility.
-    logger.warning(
-        "api-key bootstrap: generated initial admin key (copy now; not shown again)\n"
-        f"    GATEWAY_BOOTSTRAP_API_KEY={generated}"
-    )
+    # generate() already caches in store.raw_keys; the portal endpoint can
+    # surface it. Logging is opt-out for production deployments where logs
+    # are forwarded to a multi-tenant aggregator.
+    if log_generated_key:
+        logger.warning(
+            "api-key bootstrap: generated initial admin key (copy now; not shown again)\n"
+            f"    GATEWAY_BOOTSTRAP_API_KEY={generated}"
+        )
+    else:
+        logger.warning(
+            "api-key bootstrap: generated initial admin key (suppressed from logs; "
+            "retrieve from /portal/apikey or set GATEWAY_BOOTSTRAP_API_KEY)"
+        )
     return generated
 
 

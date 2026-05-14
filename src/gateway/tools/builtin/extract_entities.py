@@ -26,7 +26,7 @@ async def run(args: dict, settings: Any, redis_client: Any = None, engine: Any =
             model=settings.default_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=512,
+            max_tokens=getattr(settings, "tool_extract_entities_max_tokens", 512),
             stop=None,
             tools=None,
             response_format="json",

@@ -5,6 +5,8 @@ from typing import TypedDict
 import httpx
 from loguru import logger
 
+from gateway.tools.http_client import get_client
+
 
 class SearchSource(TypedDict):
     url: str
@@ -26,11 +28,11 @@ async def search(query: str, base_url: str = _SEARXNG_BASE) -> SearchResult:
         "format": "json",
         "engines": "google,bing",
     }
-    async with httpx.AsyncClient(timeout=4.0) as client:
-        try:
-            resp = await client.get(base_url, params=params)
-        except httpx.TimeoutException as exc:
-            raise RuntimeError(f"SearXNG search timed out after 4s: {exc}") from exc
+    client = await get_client(timeout=4.0)
+    try:
+        resp = await client.get(base_url, params=params)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"SearXNG search timed out after 4s: {exc}") from exc
 
     if resp.status_code != 200:
         raise RuntimeError(

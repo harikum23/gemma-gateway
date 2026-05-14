@@ -22,7 +22,7 @@ async def run(args: dict, settings: Any, redis_client: Any = None, engine: Any =
                 }
             ],
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=getattr(settings, "tool_translate_max_tokens", 1024),
             stop=None,
             tools=None,
             response_format="text",

@@ -61,3 +61,60 @@ class CircuitBreaker:
         if rate >= self.error_threshold:
             self._state = "open"
             self._opened_at = time.monotonic()
+
+
+class CircuitRegistry:
+    """Lazily-created per-(engine, model) circuit breakers.
+
+    A failing backend or model should not trip the breaker for unrelated ones.
+    Callers pass the engine name + model id; the registry returns (and caches)
+    a breaker for that key. The no-arg methods (allow/record_success/
+    record_failure/state) operate on a shared "default" breaker for callers
+    that don't carry routing info — preserves the old single-breaker API.
+    """
+
+    def __init__(
+        self,
+        *,
+        error_threshold: float = 0.2,
+        window_s: int = 30,
+        reset_s: float = 30.0,
+        min_samples: int = 20,
+    ) -> None:
+        self._params = dict(
+            error_threshold=error_threshold,
+            window_s=window_s,
+            reset_s=reset_s,
+            min_samples=min_samples,
+        )
+        self._breakers: dict[str, CircuitBreaker] = {}
+
+    def for_key(self, engine: str = "default", model: str = "default") -> CircuitBreaker:
+        key = f"{engine}::{model}"
+        b = self._breakers.get(key)
+        if b is None:
+            b = CircuitBreaker(**self._params)
+            self._breakers[key] = b
+        return b
+
+    # Convenience pass-throughs against the shared default breaker so
+    # existing call sites keep working until they migrate to for_key().
+    def allow(self, *, is_high_priority: bool) -> bool:
+        return self.for_key().allow(is_high_priority=is_high_priority)
+
+    def record_success(self) -> None:
+        self.for_key().record_success()
+
+    def record_failure(self) -> None:
+        self.for_key().record_failure()
+
+    def state(self) -> State:
+        # Worst state across all known breakers — health probes care about
+        # whether *anything* is open, not just the default key.
+        if not self._breakers:
+            return "closed"
+        order = {"open": 2, "half_open": 1, "closed": 0}
+        return max((b.state() for b in self._breakers.values()), key=lambda s: order[s])
+
+    def snapshot(self) -> dict[str, State]:
+        return {k: b.state() for k, b in self._breakers.items()}

@@ -42,11 +42,25 @@ async def generate(
     if body.max_tokens > settings.max_tokens_hard_limit:
         raise ValidationError(f"max_tokens must be <= {settings.max_tokens_hard_limit}")
 
+    # Reject prompts that wouldn't fit in the model context window. Without
+    # this, Ollama silently truncates the prompt and produces a confused
+    # response with no error surfaced to the caller.
+    prompt_chars = sum(len(m.content) for m in body.messages)
+    est_prompt_tokens = max(1, prompt_chars // settings.chars_per_token)
+    budget = settings.model_num_ctx - body.max_tokens - settings.input_token_headroom
+    if est_prompt_tokens > budget:
+        raise ValidationError(
+            f"estimated prompt tokens ({est_prompt_tokens}) exceed available context "
+            f"({budget} = num_ctx {settings.model_num_ctx} - max_tokens {body.max_tokens} "
+            f"- headroom {settings.input_token_headroom})"
+        )
+
     model = body.model or settings.default_model
     req_id = request.headers.get("X-Request-Id") or uuid.uuid4().hex
     is_high = body.priority == "high"
 
-    if not state.circuit.allow(is_high_priority=is_high):
+    breaker = state.circuit.for_key(engine=state.engine.name, model=model)
+    if not breaker.allow(is_high_priority=is_high):
         raise CircuitOpenError()
 
     state.rate_limiter.check(principal.key_id)
@@ -80,9 +94,9 @@ async def generate(
                     "model": model,
                     "request_id": req_id,
                 }) + b"\n\n"
-                state.circuit.record_success()
+                breaker.record_success()
             except Exception as exc:
-                state.circuit.record_failure()
+                breaker.record_failure()
                 logger.exception("stream error: {}", exc)
                 yield b"data: " + orjson.dumps({"error": str(exc), "request_id": req_id}) + b"\n\n"
 
@@ -110,12 +124,12 @@ async def generate(
             # Queue pressure is not an engine fault — don't penalise the circuit.
             raise
         except EngineUnavailableError:
-            state.circuit.record_failure()
+            breaker.record_failure()
             raise
         except Exception:
-            state.circuit.record_failure()
+            breaker.record_failure()
             raise
-        state.circuit.record_success()
+        breaker.record_success()
         total_ms = (time.monotonic() - t0) * 1000
         queue_wait_ms = (time.monotonic() - enqueue_start - (total_ms / 1000)) * 1000
         if queue_wait_ms < 0:
@@ -167,12 +181,12 @@ async def generate(
         # Queue pressure is not an engine fault — don't penalise the circuit.
         raise
     except EngineUnavailableError:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
     except Exception:
-        state.circuit.record_failure()
+        breaker.record_failure()
         raise
-    state.circuit.record_success()
+    breaker.record_success()
     total_ms = (time.monotonic() - t0) * 1000
     queue_wait_ms = (time.monotonic() - enqueue_start - (total_ms / 1000)) * 1000
     if queue_wait_ms < 0:

@@ -36,7 +36,12 @@ async def web_search(
         return cached
 
     # 2. Enforce per-key daily quota
-    await quota_mod.check_and_increment(redis_client, api_key_id, settings.search_daily_quota_per_key)
+    await quota_mod.check_and_increment(
+        redis_client,
+        api_key_id,
+        settings.search_daily_quota_per_key,
+        redis_required=getattr(settings, "redis_required", False),
+    )
 
     # 3. Call provider — fall back to SearXNG if Gemini fails
     if provider == "gemini":
