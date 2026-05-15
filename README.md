@@ -62,7 +62,7 @@ A single, shareable HTTP service that exposes Gemma (and future models) as LLM p
                          ▲
                          │ HTTPS + API key
                          │
-          Client apps (SMA, ISA, AgentFlow)
+                     Client apps 
 ```
 
 ### Why hybrid, not all-in-Docker (critical)
